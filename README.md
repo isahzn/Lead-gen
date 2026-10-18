@@ -44,4 +44,4 @@ Swipe right only approves. Send needs a separate confirm dialog. No resend to sa
 Automated discovery is **Playwright MCP only**: the app starts the official Playwright MCP server (`@playwright/mcp`) and drives a real browser to search Bing, then analyses each result's site. No search API key, and the browser runs headed because Bing serves unrelated results to a headless browser. Also available: Add URL, CSV import, and Demo (MOCK). No LinkedIn scraping or Maps scraping; add LinkedIn leads via CSV.
 
 ## Not tested
-Real DNS email verification and live-site fetching (my sandbox is offline), real Brave/Google calls, real SMTP, browser swipe UI, Windows execution, fetching live sites from my sandbox.
+Real DNS email verification and live-site fetching from an offline sandbox, real SMTP delivery, browser swipe UI, Windows execution. Playwright MCP discovery was tested live end-to-end on 2026-10-18 (headed browser, Bing); it needs a visible browser window and a working Node.js.
