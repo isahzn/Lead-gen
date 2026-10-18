@@ -33,9 +33,9 @@ Then tell me: how many queries you ran, how many sites you checked, how many you
 
 # About Laya (read this once)
 
-Laya is **not a chat model**, so it has no system prompt and can't drive Playwright. It's a fast classifier: the app hands it a short text (the verified observations) plus a list of questions with allowed answers, and it picks an answer with a confidence. The "instructions" it follows are the `LAYA_Q` question definitions in `app.py`:
+Laya is **not a chat model**, so it has no system prompt and can't drive Playwright. It's a fast classifier: the app hands it a short text (the verified observations) plus a list of questions with allowed answers, and it picks an answer with a confidence. The "instructions" it follows are the `LAYA_Q` question definitions in `app.py`, written to act like Harvey (the autonomous sales agent at github.com/ethanplusai/harvey): consultative, value-first, never fabricates, and conservative — thin or doubtful evidence means `no_clear_need`, never a guess:
 
-- question: *Based on the website observations, which service would help this business most?*
-- allowed answers: `website_redesign` (outdated / insecure / not mobile friendly), `automation_chatbot` (enquiries or bookings handled manually), `no_clear_need`
+- question: *You are Harvey, a consultative sales analyst. Based ONLY on the website observations, which service would genuinely help this business most?*
+- allowed answers: `website_redesign` (concrete, checkable site problems: outdated / insecure / not mobile friendly), `automation_chatbot` (enquiries or bookings observably handled manually), `no_clear_need` (thin, stale, contradictory, or problem-free observations — the choice when in doubt)
 
 So the flow is: your Playwright agent researches and writes the CSV → press **Import folder** in the app → the app analyses each site and Laya classifies the service. To change what Laya decides, edit the criteria text in `LAYA_Q` (see `LAYA_INTEGRATION.md` for the verified API).

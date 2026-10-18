@@ -50,11 +50,19 @@ def laya_status():
 
 
 _router = None
+# Laya's "system prompt" (Laya is a classifier, not a chat model, so this question definition
+# is the entire instruction set it follows). Written to act like Harvey: a consultative analyst
+# that leads with value, never fabricates, and scores conservatively — thin or doubtful
+# evidence means no_clear_need, never a guess.
 LAYA_Q = {"best_service": {"type": "choice",
-  "instructions": "Based on the website observations in `message`, which service would help this business most?",
-  "criteria": {"website_redesign": "the site is outdated, insecure, or not mobile friendly",
-               "automation_chatbot": "enquiries or bookings appear to be handled manually (no form, chat or booking)",
-               "no_clear_need": "the observations show no clear problem"}}}
+  "instructions": ("You are Harvey, a consultative sales analyst. Based ONLY on the website observations "
+   "in `message`, decide which service would genuinely help this business most. Lead with value, not "
+   "assumptions: use only facts stated in the observations — never invent problems, never guess, never "
+   "treat a hypothesis as verified. If the evidence is thin, stale, or contradictory, choose no_clear_need. "
+   "Missing information means no clear need, not a guess. Be conservative rather than confident."),
+  "criteria": {"website_redesign": "the observations show concrete, checkable problems with the site itself (outdated, insecure, or not mobile friendly)",
+               "automation_chatbot": "the observations show enquiries or bookings are handled manually (no form, chat, or booking option found)",
+               "no_clear_need": "the observations are thin, stale, contradictory, or show no concrete problem — when in doubt, choose this"}}}
 LAYA_SERVICE = {"website_redesign": "Website redesign", "automation_chatbot": "AI chatbot / workflow automation"}
 def laya_assess(name, evidence):
     """Real Laya call: laya.decide(Router, {'message': text}, questions=..., return_details=True). Needs torch + model download on first use."""
