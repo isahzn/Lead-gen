@@ -1,0 +1,15 @@
+# Secrets / local config (friend copies .env.example -> .env or uses Settings page)
+.env
+
+# Local app data
+*.db
+*.db-journal
+.server.pid
+server.log
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Imported CSVs that were already processed
+imports/done/
