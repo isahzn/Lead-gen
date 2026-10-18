@@ -50,6 +50,28 @@ def test_gmail_smtp_defaults(monkeypatch):
     assert c.post("/api/smtp/test").status_code == 400  # asks for address + app password, no network attempted
     monkeypatch.setenv("SMTP_USER", "me@gmail.com")
     assert A.smtp_cfg()["from"] == "me@gmail.com"  # FROM falls back to USER
+def test_playwright_mcp_link_parsing():
+    import playwright_mcp as M
+    redirect = "https://www.bing.com/ck/a?!&&p=abc&u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS9jb250YWN0&ntb=1"
+    assert M._unwrap_bing(redirect) == "https://example.com/contact"
+    raw = '### Result\n[\n  "' + redirect + '",\n  "https://direct.test/",\n  "bad"\n]'
+    assert M._parse_links(raw) == ["https://example.com/contact", "https://direct.test/"]
+
+def test_search_uses_playwright_mcp(monkeypatch):
+    import playwright_mcp
+    class FakeMCP:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def search(self, query, limit=10): return ["https://mcp-found.test/", "https://facebook.com/skip"]
+    monkeypatch.setattr(playwright_mcp, "PlaywrightMCP", FakeMCP)
+    monkeypatch.setattr(A, "analyze", lambda *a, **k: {"url": "https://mcp-found.test/", "title": "Found Co", "email": "a@mcp-found.test",
+        "email_check": "mx_ok", "phone": "", "problems": [],
+        "evidence": [{"kind": "verified", "fact": "x", "source": "https://mcp-found.test/"}]})
+    r = c.post("/api/search", json={"niche": "n", "location": "l", "provider": "playwright", "count": 1}).json()
+    assert r["added"] == 1 and any("Playwright MCP" in line for line in r["log"])
+    assert c.post("/api/search", json={"niche": "n", "location": "l", "provider": "brave"}).status_code == 400
+
 def test_multipage_and_email_syntax(monkeypatch):
     import types
     pages = {"https://s.test/": '<title>S</title><a href="/contact">c</a><footer>&copy; 2015</footer>', "https://s.test/contact": 'mail <a>info@s.test</a>'}

@@ -13,7 +13,7 @@ Python + FastAPI + SQLite, single-page UI. No Node, no Docker.
 
 ## What you need
 - Nothing for Demo (MOCK) mode / Add-by-URL / CSV import.
-- **Brave Search API key** (free tier) in Settings for automated discovery.
+- **Node.js** (already needed for discovery) — installer included at `installers/node-v24.14.1-x64.msi`. Automated discovery runs through the **Playwright MCP**, so no search API key is required. A browser window opens while it searches.
 - **SMTP** details only to send for real. Default is `SMTP_MODE=dry` (logs only). Gmail host/port/security come pre-filled — you only type your Gmail address + an app password (Google Account → Security → 2-Step Verification → App passwords).
 
 ## Added in this version
@@ -41,7 +41,7 @@ Swipe right only approves. Send needs a separate confirm dialog. No resend to sa
 `python run.py check` (or `setup.ps1`) verifies Python, deps, Laya import, torch, database.
 
 ## Providers
-Brave Search (key), Google Places official API (key, finds businesses with websites), Add URL, CSV import, Demo (MOCK). No LinkedIn scraping or Maps scraping; add LinkedIn leads via CSV.
+Automated discovery is **Playwright MCP only**: the app starts the official Playwright MCP server (`@playwright/mcp`) and drives a real browser to search Bing, then analyses each result's site. No search API key, and the browser runs headed because Bing serves unrelated results to a headless browser. Also available: Add URL, CSV import, and Demo (MOCK). No LinkedIn scraping or Maps scraping; add LinkedIn leads via CSV.
 
 ## Not tested
 Real DNS email verification and live-site fetching (my sandbox is offline), real Brave/Google calls, real SMTP, browser swipe UI, Windows execution, fetching live sites from my sandbox.

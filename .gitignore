@@ -13,3 +13,6 @@ __pycache__/
 
 # Imported CSVs that were already processed
 imports/done/
+
+# Playwright MCP runtime output (page snapshots, console logs)
+.playwright-mcp/

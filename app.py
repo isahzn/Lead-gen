@@ -196,7 +196,7 @@ def build_lead(url, name, niche, location, source):
             "draft_flag": flag, "status": status, "source": source, "email_check": a["email_check"]}, ""
 
 class SearchReq(BaseModel):
-    niche: str; location: str; keywords: str = ""; provider: str = "brave"; count: int = 10
+    niche: str; location: str; keywords: str = ""; provider: str = "playwright"; count: int = 10
 @app.post("/api/search")
 def search(r: SearchReq):
     log = []
@@ -207,45 +207,36 @@ def search(r: SearchReq):
                     "evidence": [{"fact": "MOCK DATA — not a real business", "kind": "hypothesis", "source": "mock"}], "problems": ["no_viewport"], "service": "Website redesign",
                     "score": 55, "confidence": "low", "subject": "MOCK subject", "body": "MOCK body — dry-run only.", "status": "qualified", "source": "mock", "is_mock": 1, "email_check": "mock"}))
         return {"log": [f"Inserted {added} clearly-labelled MOCK leads (never sendable live)."], "added": added}
-    if r.provider == "google":
-        gk = env("GOOGLE_PLACES_KEY")
-        if not gk: raise HTTPException(400, "GOOGLE_PLACES_KEY not set (Google Places API, official).")
-        try:
-            res = httpx.post("https://places.googleapis.com/v1/places:searchText", json={"textQuery": f"{r.niche} {r.location} {r.keywords}".strip(), "pageSize": min(r.count, 20)},
-                headers={"X-Goog-Api-Key": gk, "X-Goog-FieldMask": "places.displayName,places.websiteUri,places.nationalPhoneNumber,places.formattedAddress"}, timeout=20)
-            res.raise_for_status(); places = res.json().get("places", [])
-        except Exception as e: raise HTTPException(502, f"Google Places failed: {e}")
-        log, added = [f"Google Places: {len(places)} places"], 0
-        for p in places:
-            site = p.get("websiteUri")
-            if not site: log.append(f"  skip {p['displayName']['text']}: no website listed"); continue
-            lead, err = build_lead(site, p["displayName"]["text"], r.niche, r.location, "google_places")
-            if err: log.append(f"  skip: {err[:80]}"); continue
-            lead["phone"] = lead["phone"] or p.get("nationalPhoneNumber", "")
-            if upsert(lead): added += 1; log.append(f"  + {p['displayName']['text']} (score {lead['score']})")
-            else: log.append(f"  dup {p['displayName']['text']}")
-        return {"log": log, "added": added}
-    key = env("BRAVE_API_KEY")
-    if not key: raise HTTPException(400, "BRAVE_API_KEY not set. Add it in Settings (free tier at brave.com/search/api), or use CSV import / Add URL.")
-    queries = [f"{r.niche} {r.location} {r.keywords}".strip(), f"{r.niche} in {r.location} contact", f"best {r.niche} {r.location} {r.keywords}".strip()]
+    if r.provider != "playwright":
+        raise HTTPException(400, f"Unknown provider '{r.provider}'. Discovery runs through the Playwright MCP only.")
+    # Discovery via the Playwright MCP: a real browser performs the search, so no
+    # search API key is involved. See playwright_mcp.py.
+    from playwright_mcp import PlaywrightMCP, MCPError
+    queries = [f"{r.niche} {r.location} {r.keywords}".strip(), f"{r.niche} in {r.location} contact",
+               f"best {r.niche} {r.location} {r.keywords}".strip()]
     seen, added = set(), 0
-    for q in queries:
-        try:
-            res = httpx.get("https://api.search.brave.com/res/v1/web/search", params={"q": q, "count": min(r.count, 20)}, headers={"X-Subscription-Token": key}, timeout=15)
-            res.raise_for_status(); items = res.json().get("web", {}).get("results", [])
-            log.append(f"Query '{q}': {len(items)} results")
-        except Exception as e:
-            log.append(f"Query '{q}' FAILED: {e}"); continue
-        for it in items:
-            host = urlparse(it["url"]).netloc.replace("www.", "")
-            if host in seen or any(s in host for s in SKIP): continue
-            seen.add(host)
-            lead, err = build_lead("https://" + host, "", r.niche, r.location, f"brave:{q}")
-            if err: log.append(f"  skip {host}: {err[:80]}"); continue
-            if upsert(lead): added += 1; log.append(f"  + {host} (score {lead['score']})")
-            else: log.append(f"  dup {host}")
-            if added >= r.count: break
-        if added >= r.count: break
+    try:
+        with PlaywrightMCP() as browser:
+            for q in queries:
+                try:
+                    found = browser.search(q, r.count)
+                except MCPError as e:
+                    log.append(f"Query '{q}' FAILED: {e}"); continue
+                log.append(f"Playwright MCP '{q}': {len(found)} results")
+                for link in found:
+                    host = urlparse(link).netloc.replace("www.", "").lower()
+                    if not host or host in seen or any(s in host for s in SKIP): continue
+                    seen.add(host)
+                    lead, err = build_lead("https://" + host, "", r.niche, r.location, f"playwright:{q}")
+                    if err: log.append(f"  skip {host}: {err[:80]}"); continue
+                    if upsert(lead): added += 1; log.append(f"  + {host} (score {lead['score']})")
+                    else: log.append(f"  dup {host}")
+                    if added >= r.count: break
+                if added >= r.count: break
+    except MCPError as e:
+        raise HTTPException(502, f"Playwright MCP unavailable: {e}")
+    except Exception as e:
+        raise HTTPException(502, f"Playwright MCP failed: {type(e).__name__}: {e}")
     return {"log": log, "added": added}
 
 class UrlReq(BaseModel):
@@ -395,9 +386,9 @@ def history():
     c = db(); r = [dict(x) for x in c.execute("SELECT s.*, l.name FROM sends s LEFT JOIN leads l ON l.id=s.lead_id ORDER BY s.id DESC")]; c.close(); return r
 
 # ---------- Settings / status ----------
-KEYS = ["FOLLOWUP_DAYS","MAX_FOLLOWUPS","LAYA_ENABLED","GOOGLE_PLACES_KEY","SMTP_MODE","SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","SMTP_FROM","SMTP_SECURE","SENDER_NAME","DAILY_LIMIT","BRAVE_API_KEY"]
+KEYS = ["FOLLOWUP_DAYS","MAX_FOLLOWUPS","LAYA_ENABLED","PLAYWRIGHT_MCP_CLI","SMTP_MODE","SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","SMTP_FROM","SMTP_SECURE","SENDER_NAME","DAILY_LIMIT"]
 @app.get("/api/settings")
-def get_settings(): return {k: ("" if k in ("SMTP_PASS","BRAVE_API_KEY","GOOGLE_PLACES_KEY") else (env(k) or GMAIL.get(k, ""))) for k in KEYS} | {f"has_{k}": bool(env(k)) for k in ("SMTP_PASS","BRAVE_API_KEY","GOOGLE_PLACES_KEY")}
+def get_settings(): return {k: ("" if k == "SMTP_PASS" else (env(k) or GMAIL.get(k, ""))) for k in KEYS} | {f"has_{k}": bool(env(k)) for k in ("SMTP_PASS",)}
 @app.post("/api/settings")
 def set_settings(d: dict):
     ENV.touch()
@@ -416,6 +407,7 @@ def smtp_test():
 @app.get("/api/status")
 def status():
     c = db(); cnt = {r[0]: r[1] for r in c.execute("SELECT status,COUNT(*) FROM leads GROUP BY status")}; c.close()
-    return {"ok": True, "counts": cnt, "laya": laya_status(), "smtp_mode": env("SMTP_MODE", "dry"), "brave_configured": bool(env("BRAVE_API_KEY")), "google_configured": bool(env("GOOGLE_PLACES_KEY")), "followups_due": len(followups())}
+    from playwright_mcp import availability as mcp_availability
+    return {"ok": True, "counts": cnt, "laya": laya_status(), "smtp_mode": env("SMTP_MODE", "dry"), "discovery": mcp_availability(), "followups_due": len(followups())}
 @app.get("/")
 def index(): return FileResponse(ROOT / "static" / "index.html")
