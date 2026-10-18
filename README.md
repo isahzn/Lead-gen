@@ -14,7 +14,7 @@ Python + FastAPI + SQLite, single-page UI. No Node, no Docker.
 ## What you need
 - Nothing for Demo (MOCK) mode / Add-by-URL / CSV import.
 - **Brave Search API key** (free tier) in Settings for automated discovery.
-- **SMTP** details only to send for real. Default is `SMTP_MODE=dry` (logs only). Gmail/Outlook need an app password.
+- **SMTP** details only to send for real. Default is `SMTP_MODE=dry` (logs only). Gmail host/port/security come pre-filled — you only type your Gmail address + an app password (Google Account → Security → 2-Step Verification → App passwords).
 
 ## Added in this version
 - **Multi-page analysis:** homepage + up to 3 contact/about/services/booking pages; each piece of evidence records the page it came from.

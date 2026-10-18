@@ -38,6 +38,18 @@ def test_laya_adapter_parsing(monkeypatch):
     assert "error" in A.laya_assess("X", [])
     os.environ["LAYA_ENABLED"] = "0"; assert A.laya_assess("X", []) is None
 
+def test_gmail_smtp_defaults(monkeypatch):
+    for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"):
+        monkeypatch.delenv(k, raising=False)
+    s = c.get("/api/settings").json()
+    assert s["SMTP_HOST"] == "smtp.gmail.com" and s["SMTP_PORT"] == "587" and s["SMTP_SECURE"] == "starttls"
+    cfg = A.smtp_cfg()
+    assert cfg["host"] == "smtp.gmail.com" and cfg["port"] == 587 and cfg["from"] == ""
+    try: A.smtp_send("a@b.c", "s", "b"); assert False, "should refuse without creds"
+    except ValueError as e: assert "app password" in str(e)
+    assert c.post("/api/smtp/test").status_code == 400  # asks for address + app password, no network attempted
+    monkeypatch.setenv("SMTP_USER", "me@gmail.com")
+    assert A.smtp_cfg()["from"] == "me@gmail.com"  # FROM falls back to USER
 def test_multipage_and_email_syntax(monkeypatch):
     import types
     pages = {"https://s.test/": '<title>S</title><a href="/contact">c</a><footer>&copy; 2015</footer>', "https://s.test/contact": 'mail <a>info@s.test</a>'}

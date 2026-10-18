@@ -306,13 +306,27 @@ def suppress(s: Sup):
 def sup_list():
     c = db(); r = [dict(x) for x in c.execute("SELECT * FROM suppression")]; c.close(); return r
 
+# ---------- Gmail SMTP preset: host/port/security are pre-filled; only address + app password are asked ----------
+GMAIL = {"SMTP_HOST": "smtp.gmail.com", "SMTP_PORT": "587", "SMTP_SECURE": "starttls"}
+def smtp_cfg():
+    """Resolved SMTP config. Host/port/security fall back to Gmail; SMTP_FROM falls back to SMTP_USER."""
+    sec = (env("SMTP_SECURE", "") or GMAIL["SMTP_SECURE"]).lower()
+    port = env("SMTP_PORT", "") or ("465" if sec == "ssl" else GMAIL["SMTP_PORT"])
+    return {"host": env("SMTP_HOST", "") or GMAIL["SMTP_HOST"], "port": int(port), "secure": sec,
+            "user": env("SMTP_USER", ""), "password": env("SMTP_PASS", ""),
+            "from": env("SMTP_FROM", "") or env("SMTP_USER", "")}
+def _smtp_creds_or_raise(cfg):
+    if not cfg["user"] or not cfg["password"]:
+        raise ValueError("Set SMTP_USER (your Gmail address) and SMTP_PASS (a Gmail app password) in Settings.")
+    return cfg
 def smtp_send(to, subject, body):
-    m = EmailMessage(); m["From"] = env("SMTP_FROM") or env("SMTP_USER"); m["To"] = to; m["Subject"] = subject; m.set_content(body)
-    port = int(env("SMTP_PORT", "587")); ctx = ssl.create_default_context()
-    if env("SMTP_SECURE") == "ssl": s = smtplib.SMTP_SSL(env("SMTP_HOST"), port, context=ctx, timeout=20)
+    c = _smtp_creds_or_raise(smtp_cfg())
+    m = EmailMessage(); m["From"] = c["from"]; m["To"] = to; m["Subject"] = subject; m.set_content(body)
+    ctx = ssl.create_default_context()
+    if c["secure"] == "ssl": s = smtplib.SMTP_SSL(c["host"], c["port"], context=ctx, timeout=20)
     else:
-        s = smtplib.SMTP(env("SMTP_HOST"), port, timeout=20); s.starttls(context=ctx)
-    try: s.login(env("SMTP_USER"), env("SMTP_PASS")); s.send_message(m)
+        s = smtplib.SMTP(c["host"], c["port"], timeout=20); s.starttls(context=ctx)
+    try: s.login(c["user"], c["password"]); s.send_message(m)
     finally: s.quit()
 
 class SendReq(BaseModel): confirm: bool = False; subject: str | None = None; body: str | None = None
@@ -375,7 +389,7 @@ def history():
 # ---------- Settings / status ----------
 KEYS = ["FOLLOWUP_DAYS","MAX_FOLLOWUPS","LAYA_ENABLED","GOOGLE_PLACES_KEY","SMTP_MODE","SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","SMTP_FROM","SMTP_SECURE","SENDER_NAME","DAILY_LIMIT","BRAVE_API_KEY"]
 @app.get("/api/settings")
-def get_settings(): return {k: ("" if k in ("SMTP_PASS","BRAVE_API_KEY","GOOGLE_PLACES_KEY") else env(k)) for k in KEYS} | {f"has_{k}": bool(env(k)) for k in ("SMTP_PASS","BRAVE_API_KEY","GOOGLE_PLACES_KEY")}
+def get_settings(): return {k: ("" if k in ("SMTP_PASS","BRAVE_API_KEY","GOOGLE_PLACES_KEY") else (env(k) or GMAIL.get(k, ""))) for k in KEYS} | {f"has_{k}": bool(env(k)) for k in ("SMTP_PASS","BRAVE_API_KEY","GOOGLE_PLACES_KEY")}
 @app.post("/api/settings")
 def set_settings(d: dict):
     ENV.touch()
@@ -385,9 +399,11 @@ def set_settings(d: dict):
 @app.post("/api/smtp/test")
 def smtp_test():
     try:
-        s = smtplib.SMTP_SSL(env("SMTP_HOST"), int(env("SMTP_PORT", "465")), timeout=15) if env("SMTP_SECURE") == "ssl" else smtplib.SMTP(env("SMTP_HOST"), int(env("SMTP_PORT", "587")), timeout=15)
-        if env("SMTP_SECURE") != "ssl": s.starttls(context=ssl.create_default_context())
-        s.login(env("SMTP_USER"), env("SMTP_PASS")); s.quit(); return {"ok": True, "message": "Login OK. No email was sent."}
+        c = _smtp_creds_or_raise(smtp_cfg())
+        s = smtplib.SMTP_SSL(c["host"], c["port"], timeout=15) if c["secure"] == "ssl" else smtplib.SMTP(c["host"], c["port"], timeout=15)
+        if c["secure"] != "ssl": s.starttls(context=ssl.create_default_context())
+        s.login(c["user"], c["password"]); s.quit(); return {"ok": True, "message": "Login OK. No email was sent."}
+    except ValueError as e: raise HTTPException(400, str(e))
     except Exception as e: raise HTTPException(400, f"{type(e).__name__}: {e}".replace(env("SMTP_PASS", "\0"), "***"))
 @app.get("/api/status")
 def status():
