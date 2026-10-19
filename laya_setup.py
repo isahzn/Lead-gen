@@ -54,6 +54,7 @@ def test(model: str) -> int:
                     "tag found; site is not mobile friendly; pages look dated."},
         questions=app.LAYA_Q,
         return_details=True,
+        model=model,
     )
     elapsed = time.time() - started
     print("answers:", res.answers)

@@ -37,12 +37,17 @@ now = lambda: dt.datetime.now().isoformat(timespec="seconds")
 
 # ---------- Laya (real inference) ----------
 LAYA_REPO = "convaiinnovations/laya"     # the checkpoint bundle laya.Router() defaults to
-def laya_weights_cached():
-    """True when the multilingual checkpoint is already downloaded (so loading needs no network)."""
+LAYA_MODEL = "multilingual"              # pinned: routing otherwise picks `english` for longer English text
+# Both checkpoints live in LAYA_REPO; each has its own subfolder (the English one is the repo root).
+LAYA_SUBFOLDER = {"english": "", "multilingual": "multilingual", "typed-decisions": "typed-decisions"}
+def laya_weights_cached(model=LAYA_MODEL):
+    """True when that checkpoint is already downloaded (so loading needs no network)."""
     try:
         from huggingface_hub import snapshot_download
-        path = snapshot_download(LAYA_REPO, allow_patterns=["multilingual/model.safetensors"], local_files_only=True)
-        return (Path(path) / "multilingual" / "model.safetensors").is_file()
+        sub = LAYA_SUBFOLDER[model]
+        path = snapshot_download(LAYA_REPO, allow_patterns=[(sub + "/" if sub else "") + "model.safetensors"],
+                                 local_files_only=True)
+        return (Path(path) / sub / "model.safetensors").is_file()
     except Exception:
         return False
 def laya_status():
@@ -56,7 +61,8 @@ def laya_status():
         return {"importable": True, "version": version("laya"), "has_Router": r is not None,
                 "router_public_api": [a for a in dir(r) if not a.startswith("_")] if r else [],
                 "enabled": env("LAYA_ENABLED") == "1", "torch": torch_v,
-                "weights_cached": laya_weights_cached(), "model": LAYA_REPO + " (multilingual)",
+                "weights": {m: laya_weights_cached(m) for m in LAYA_SUBFOLDER},
+                "weights_cached": laya_weights_cached(), "model": f"{LAYA_REPO} ({LAYA_MODEL})",
                 "loaded": bool(_router is not None and getattr(_router, "loaded", [])),
                 "resident": list(getattr(_router, "loaded", []) or []),
                 "load_error": _warm_error,
@@ -70,18 +76,19 @@ _router = None
 _router_lock = threading.Lock()
 _warm_error = None
 def _laya_router(preload=False):
-    """One Router for the process. laya loads the checkpoint on first use, so `preload=True`
-    builds it here (that is the ~20 s step) instead of inside a request.
+    """One Router for the process. laya loads a checkpoint lazily on first use, so
+    `preload=True` builds it here (the ~20 s step) instead of inside a request.
 
-    Only `multilingual` is built: that is the checkpoint `Router()`'s default routes English
-    evidence to as well (verified: router.loaded == ['multilingual']).
+    Only `multilingual` is built: it is pinned through `model=` on every call. Left to route
+    on its own, laya switches to `english` for longer English text and holds both checkpoints
+    resident, which is a second ~840 MB download and ~1.3 GB of RAM.
     """
     global _router
     with _router_lock:
         if _router is None:
             import laya
             _router = laya.Router()
-            if preload: _router.load("multilingual")
+            if preload: _router.load(LAYA_MODEL)
     return _router
 def _laya_warm():
     """With LAYA_ENABLED=1, load the checkpoint in the background so the first search isn't frozen."""
@@ -112,7 +119,7 @@ def _laya_smoke():
         router, started = _laya_router(), time.time()
         res = laya.decide(router, {"message": "Business: a London dental practice. Observations: "
                                    "No <meta viewport> tag found; the site is not mobile friendly."},
-                          questions=LAYA_Q, return_details=True)
+                          questions=LAYA_Q, return_details=True, model=LAYA_MODEL)
         return {"ok": True, "answer": _laya_choice(res),
                 "confidence": (getattr(res, "answer_confidence", None) or {}).get("best_service"),
                 "seconds": round(time.time() - started, 1)}
@@ -139,7 +146,7 @@ def laya_assess(name, evidence):
     try:
         import laya
         text = f"Business: {name}. Observations: " + "; ".join(e["fact"] for e in evidence)
-        r = laya.decide(_laya_router(), {"message": text}, questions=LAYA_Q, return_details=True)
+        r = laya.decide(_laya_router(), {"message": text}, questions=LAYA_Q, return_details=True, model=LAYA_MODEL)
         ans = _laya_choice(r)
         conf = (getattr(r, "answer_confidence", None) or getattr(r, "confidence", {}) or {}).get("best_service")
         criteria = LAYA_Q["best_service"]["criteria"]

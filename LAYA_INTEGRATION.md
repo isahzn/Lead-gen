@@ -2,7 +2,8 @@
 
 > **STATUS (2026-10-19): done and verified with the real model on this PC.**
 > - Weights downloaded (`convaiinnovations/laya`, `multilingual`, 644 MB) — `python laya_setup.py download`.
-> - Real inference works: `python laya_setup.py test` → `website_redesign` @ 0.743. ~15–25 s first call, ~2 s per lead afterwards (through the API).
+> - Real inference works: `python laya_setup.py test` → `website_redesign` @ 0.743. Preloaded at startup, so ~0.6–0.7 s per lead through the API (~15–25 s if the checkpoint loads on demand).
+> - Pinned to `multilingual` with `model=`: left to route on its own, laya switched to `english` for longer English text and kept both checkpoints resident (~1.3 GB RAM on an 8 GB machine).
 > - `res.answers["best_service"]` is a **dict** (`{'type':'choice','choice':...,'probabilities':{...}}`), not a string; `app.laya_assess` now reads `choice` (a substring match would always return the first option, since every option appears in `probabilities`).
 > - `POST /api/laya/test` (+ Settings → **Test Laya**) and background preload on startup are implemented; 11/11 tests pass.
 > - Known caveat: the shipped checkpoints are over-confident (0.99 returned for a site with no problem), so treat confidence as relative.

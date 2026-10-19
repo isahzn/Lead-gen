@@ -31,12 +31,12 @@ Logging into LinkedIn with your credentials / scraping it, and scraping Google M
 Swipe right only approves. Send needs a separate confirm dialog. No resend to same address, suppression list, daily limit (default 10), mock leads can't send live.
 
 ## Laya (real inference verified on this machine)
-- Model: `convaiinnovations/laya`, `multilingual` checkpoint (644 MB), already downloaded into `%USERPROFILE%\.cache\huggingface\hub`, so inference needs no network.
+- Model: `convaiinnovations/laya`, **pinned to `multilingual`** (644 MB) via `model=LAYA_MODEL` in `app.py`. It is already downloaded into `%USERPROFILE%\.cache\huggingface\hub`, so inference needs no network. (The `english` checkpoint, 843 MB, is cached too because routing picked it once; leave it pinned unless you want laya's ~0.11 better English accuracy at ~1.3 GB extra RAM.)
 - Setup/repair: `python laya_setup.py download` then `python laya_setup.py test` (one real decision). Settings → **Test Laya** runs the same check through the app.
 - Adapter in `app.py` → `laya_assess()` calls `laya.decide(_laya_router(), {"message": evidence_text}, questions=LAYA_Q, return_details=True)`. laya 0.4.7 returns a dict per field (`{'type':'choice','choice':'<option>','probabilities':{...}}`), so the adapter reads `choice` — a substring match would always pick the first option, because every option appears in `probabilities`.
 - Laya only picks the **recommended service** (used when its confidence >= 0.6); the raw output (`best_service`, `confidence`, `probabilities`) is stored under `laya_output`, and the 0-100 score stays rule-based. Laya does not browse, discover, or write emails.
 - **Vendored:** `vendor/laya-0.4.7-py3-none-any.whl` ships in this repo; `run.py setup` installs it with `--no-deps` (torch is only needed to run inference).
-- **Measured here (CPU torch 2.14):** ~15–25 s for the first call (checkpoint load), then **~2 s per lead** through the API. With `LAYA_ENABLED=1` the checkpoint preloads in a background thread at startup (verified: `resident: ['multilingual']`), so the first search doesn't pay the load.
+- **Measured here (CPU torch 2.14):** with `LAYA_ENABLED=1` the checkpoint preloads in a background thread at startup (verified `resident: ['multilingual']`), so calls cost **0.6–0.7 s per lead**; without preload the first call pays ~15–25 s of checkpoint loading.
 - **Calibration caveat:** Laya's shipped checkpoints are over-confident (laya itself warns it is using fallback temperatures). In live tests it returned 0.74 on a site with a clear mobile problem but 0.99 on one with no problem at all. Read `confidence` as relative, not as a true probability.
 
 ## Check your setup
