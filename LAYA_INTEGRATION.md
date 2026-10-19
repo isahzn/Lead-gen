@@ -1,5 +1,12 @@
 # Task: finish the Laya integration in AI-Lead-Finder
 
+> **STATUS (2026-10-19): done and verified with the real model on this PC.**
+> - Weights downloaded (`convaiinnovations/laya`, `multilingual`, 644 MB) — `python laya_setup.py download`.
+> - Real inference works: `python laya_setup.py test` → `website_redesign` @ 0.743. ~15–25 s first call, ~2 s per lead afterwards (through the API).
+> - `res.answers["best_service"]` is a **dict** (`{'type':'choice','choice':...,'probabilities':{...}}`), not a string; `app.laya_assess` now reads `choice` (a substring match would always return the first option, since every option appears in `probabilities`).
+> - `POST /api/laya/test` (+ Settings → **Test Laya**) and background preload on startup are implemented; 11/11 tests pass.
+> - Known caveat: the shipped checkpoints are over-confident (0.99 returned for a site with no problem), so treat confidence as relative.
+
 You are an AI coding agent working on a local FastAPI project (`AI-Lead-Finder/`, files: `app.py`, `run.py`, `static/index.html`, `tests/test_core.py`). The user's machine: Windows 10/11, Python 3.13, `laya` 0.4.7 already installed. Do NOT reinstall or overwrite the user's Laya install.
 
 ## Already done (don't redo)

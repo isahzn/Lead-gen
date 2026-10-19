@@ -8,7 +8,7 @@ Python + FastAPI + SQLite, single-page UI. No Node, no Docker.
 ## Fresh clone checklist (for your friend)
 1. `git clone <this-repo>` + `cd` into it. Needs Python 3.10+ only.
 2. Double-click **Start AI Lead Finder** — deps + laya install themselves on first run.
-3. Optional: set `LAYA_ENABLED=1` in Settings for Laya recommendations (needs `torch` + a one-time HuggingFace model download; app works fine without it).
+3. Optional: set `LAYA_ENABLED=1` in Settings for Laya recommendations (needs `torch` + `python laya_setup.py download`; app works fine without it).
 3. Tests: `python -m pytest -q`
 
 ## What you need
@@ -22,7 +22,7 @@ Python + FastAPI + SQLite, single-page UI. No Node, no Docker.
 - **Follow-ups:** tab lists leads emailed >= `FOLLOWUP_DAYS` (default 5) ago with no reply, using stored dates whenever the app is open (no background service). One follow-up max by default (`MAX_FOLLOWUPS`). Editable draft, explicit confirm, "Mark replied" stops it.
 - **imports/ folder:** drop your own LinkedIn/Sales Navigator CSV exports there and press *Import folder* (Find Leads page).
 - `PLAYWRIGHT_AGENT_PROMPT.md`: prompt for the agent that drives Playwright MCP and writes CSVs into `imports/`.
-- `LAYA_INTEGRATION.md`: brief for your other AI agent to finish and test Laya.
+- `LAYA_INTEGRATION.md`: the brief that was used to finish and test Laya (kept for reference).
 
 ## Deliberately not built
 Logging into LinkedIn with your credentials / scraping it, and scraping Google Maps pages. Both break those sites' rules and risk your accounts. Use the Google Places API provider and the CSV/folder import instead.
@@ -30,12 +30,14 @@ Logging into LinkedIn with your credentials / scraping it, and scraping Google M
 ## Safety
 Swipe right only approves. Send needs a separate confirm dialog. No resend to same address, suppression list, daily limit (default 10), mock leads can't send live.
 
-## Laya (verified against the real laya 0.4.7 source)
-- Adapter in `app.py` → `laya_assess()` calls `laya.decide(laya.Router(), {"message": evidence_text}, questions=..., return_details=True)`.
-- Off by default. Turn on with `LAYA_ENABLED=1` (Settings). Needs `torch` + a model download from HuggingFace on first use (large, slow first run). Install torch yourself if you want it: `pip install torch`.
-- Laya only picks the **recommended service** (used when its confidence >= 0.6); its raw output is stored separately under `laya_output`. The 0-100 score is rule-based. Laya does not browse, discover, or write emails.
-- **Vendored:** `vendor/laya-0.4.7-py3-none-any.whl` ships in this repo; `run.py setup` installs it with `--no-deps`, so a fresh clone never needs a separate laya install (and never forces a torch download).
-- **Tested:** import, API signatures, answer-parsing (with a stub). **Not tested:** real model inference (no torch / no HuggingFace access in my sandbox). If it errors on your PC, the error is saved in `laya_output` and the app falls back to rules.
+## Laya (real inference verified on this machine)
+- Model: `convaiinnovations/laya`, `multilingual` checkpoint (644 MB), already downloaded into `%USERPROFILE%\.cache\huggingface\hub`, so inference needs no network.
+- Setup/repair: `python laya_setup.py download` then `python laya_setup.py test` (one real decision). Settings → **Test Laya** runs the same check through the app.
+- Adapter in `app.py` → `laya_assess()` calls `laya.decide(_laya_router(), {"message": evidence_text}, questions=LAYA_Q, return_details=True)`. laya 0.4.7 returns a dict per field (`{'type':'choice','choice':'<option>','probabilities':{...}}`), so the adapter reads `choice` — a substring match would always pick the first option, because every option appears in `probabilities`.
+- Laya only picks the **recommended service** (used when its confidence >= 0.6); the raw output (`best_service`, `confidence`, `probabilities`) is stored under `laya_output`, and the 0-100 score stays rule-based. Laya does not browse, discover, or write emails.
+- **Vendored:** `vendor/laya-0.4.7-py3-none-any.whl` ships in this repo; `run.py setup` installs it with `--no-deps` (torch is only needed to run inference).
+- **Measured here (CPU torch 2.14):** ~15–25 s for the first call (checkpoint load), then **~2 s per lead** through the API. With `LAYA_ENABLED=1` the checkpoint preloads in a background thread at startup (verified: `resident: ['multilingual']`), so the first search doesn't pay the load.
+- **Calibration caveat:** Laya's shipped checkpoints are over-confident (laya itself warns it is using fallback temperatures). In live tests it returned 0.74 on a site with a clear mobile problem but 0.99 on one with no problem at all. Read `confidence` as relative, not as a true probability.
 
 ## Check your setup
 `python run.py check` (or `setup.ps1`) verifies Python, deps, Laya import, torch, database.

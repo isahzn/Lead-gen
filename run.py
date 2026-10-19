@@ -33,6 +33,10 @@ def check():
     try: import torch; print("torch", torch.__version__, "OK (needed only if LAYA_ENABLED=1)")
     except ImportError: print("torch MISSING (Laya inference disabled; app still works)")
     sys.path.insert(0, str(ROOT)); import app; c = app.db(); c.execute("select count(*) from leads"); print("database OK:", app.DB)
+    try:
+        s = app.laya_status()
+        print("laya weights:", "cached" if s.get("weights_cached") else "MISSING -> python laya_setup.py download")
+    except Exception as e: print("laya weights: unknown:", e)
     print("server:", "up" if up() else "down (run start)")
 def start():
     if up(): print("Already running:", URL); return webbrowser.open(URL)

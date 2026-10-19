@@ -27,16 +27,41 @@ def test_csv_import_and_status():
     r = c.post("/api/import", files={"file": ("a.csv", b"name,website,email\nAcme,acme.test,hi@acme.test\n")}).json()
     assert r["imported"] == 1
     assert c.get("/api/status").json()["ok"]
+def _laya_result(choice, conf=0.74):
+    """The exact shape laya 0.4.7 returns (verified by real inference), not the guessed one."""
+    import types
+    probs = {k: (conf if k == choice else round((1 - conf) / 2, 4)) for k in A.LAYA_Q["best_service"]["criteria"]}
+    return types.SimpleNamespace(
+        answers={"best_service": {"type": "choice", "choice": choice, "probabilities": probs,
+                                  "confidence": 0.35, "answer_confidence": conf}},
+        answer_confidence={"best_service": conf})
+
 def test_laya_adapter_parsing(monkeypatch):
     import laya, types
     os.environ["LAYA_ENABLED"] = "1"; A._router = object()
-    fake = types.SimpleNamespace(answers={"best_service": "website_redesign"}, answer_confidence={"best_service": 0.91})
-    monkeypatch.setattr(laya, "decide", lambda *a, **k: fake)
+    # Every option appears in `probabilities`, so a substring match on the whole answer would
+    # always return the first criteria key -- prove the picked `choice` wins instead.
+    monkeypatch.setattr(laya, "decide", lambda *a, **k: _laya_result("automation_chatbot", 0.81))
     out = A.laya_assess("X", [{"fact": "No <meta viewport> tag found"}])
-    assert out == {"source": "laya", "best_service": "website_redesign", "confidence": 0.91}
+    assert out["best_service"] == "automation_chatbot" and out["confidence"] == 0.81
+    assert out["source"] == "laya" and out["probabilities"]["automation_chatbot"] == 0.81
+    # Older/simple shape: a bare option string still parses.
+    monkeypatch.setattr(laya, "decide", lambda *a, **k: types.SimpleNamespace(
+        answers={"best_service": "website_redesign"}, answer_confidence={"best_service": 0.91}))
+    assert A.laya_assess("X", []) == {"source": "laya", "best_service": "website_redesign", "confidence": 0.91}
     monkeypatch.setattr(laya, "decide", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert "error" in A.laya_assess("X", [])
     os.environ["LAYA_ENABLED"] = "0"; assert A.laya_assess("X", []) is None
+
+def test_laya_test_endpoint(monkeypatch):
+    import laya
+    monkeypatch.setattr(A, "_laya_router", lambda: object())   # never load the 644 MB checkpoint in tests
+    monkeypatch.setattr(laya, "decide", lambda *a, **k: _laya_result("no_clear_need", 0.55))
+    r = c.post("/api/laya/test").json()
+    assert r["ok"] and r["answer"] == "no_clear_need" and r["confidence"] == 0.55 and "seconds" in r
+    monkeypatch.setattr(laya, "decide", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    bad = c.post("/api/laya/test")
+    assert bad.status_code == 400 and "boom" in bad.json()["detail"]
 
 def test_gmail_smtp_defaults(monkeypatch):
     for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"):

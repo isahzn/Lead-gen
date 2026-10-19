@@ -1,4 +1,4 @@
-import os, re, io, socket, csv, json, sqlite3, smtplib, ssl, datetime as dt
+import os, re, io, socket, csv, json, sqlite3, smtplib, ssl, threading, time, datetime as dt
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlparse, urljoin
@@ -35,21 +35,90 @@ def init():
 init()
 now = lambda: dt.datetime.now().isoformat(timespec="seconds")
 
-# ---------- Laya (verified status only) ----------
+# ---------- Laya (real inference) ----------
+LAYA_REPO = "convaiinnovations/laya"     # the checkpoint bundle laya.Router() defaults to
+def laya_weights_cached():
+    """True when the multilingual checkpoint is already downloaded (so loading needs no network)."""
+    try:
+        from huggingface_hub import snapshot_download
+        path = snapshot_download(LAYA_REPO, allow_patterns=["multilingual/model.safetensors"], local_files_only=True)
+        return (Path(path) / "multilingual" / "model.safetensors").is_file()
+    except Exception:
+        return False
 def laya_status():
     try:
         import laya
         from importlib.metadata import version
         r = getattr(laya, "Router", None)
+        try:
+            import torch; torch_v = torch.__version__
+        except Exception: torch_v = None
         return {"importable": True, "version": version("laya"), "has_Router": r is not None,
                 "router_public_api": [a for a in dir(r) if not a.startswith("_")] if r else [],
-                "enabled": env("LAYA_ENABLED") == "1", "used_for": "recommended service (when confidence >= 0.6); score itself is rule-based",
-                "needs": "torch + model download from HuggingFace on first use"}
+                "enabled": env("LAYA_ENABLED") == "1", "torch": torch_v,
+                "weights_cached": laya_weights_cached(), "model": LAYA_REPO + " (multilingual)",
+                "loaded": bool(_router is not None and getattr(_router, "loaded", [])),
+                "resident": list(getattr(_router, "loaded", []) or []),
+                "load_error": _warm_error,
+                "used_for": "recommended service (when confidence >= 0.6); score itself is rule-based",
+                "needs": "torch + the HuggingFace weights (run: python laya_setup.py download)"}
     except Exception as e:
         return {"importable": False, "error": str(e), "enabled": False}
 
 
 _router = None
+_router_lock = threading.Lock()
+_warm_error = None
+def _laya_router(preload=False):
+    """One Router for the process. laya loads the checkpoint on first use, so `preload=True`
+    builds it here (that is the ~20 s step) instead of inside a request.
+
+    Only `multilingual` is built: that is the checkpoint `Router()`'s default routes English
+    evidence to as well (verified: router.loaded == ['multilingual']).
+    """
+    global _router
+    with _router_lock:
+        if _router is None:
+            import laya
+            _router = laya.Router()
+            if preload: _router.load("multilingual")
+    return _router
+def _laya_warm():
+    """With LAYA_ENABLED=1, load the checkpoint in the background so the first search isn't frozen."""
+    global _warm_error
+    if env("LAYA_ENABLED") != "1": return
+    def run():
+        global _warm_error
+        try: _laya_router(preload=True)
+        except Exception as e: _warm_error = f"{type(e).__name__}: {e}"[:300]
+    threading.Thread(target=run, daemon=True).start()
+def _laya_choice(res, field="best_service"):
+    """The option Laya picked, as a plain string.
+
+    laya 0.4.7 returns a dict per field -- {'type': 'choice', 'choice': '<option>', 'probabilities': {...}}
+    -- rather than the bare option string the first draft of this adapter assumed, so read `choice`
+    before falling back to str().
+    """
+    raw = (getattr(res, "answers", {}) or {}).get(field)
+    if isinstance(raw, dict):
+        for k in ("choice", "value", "answer"):
+            if raw.get(k) is not None: return str(raw[k])
+        return ""
+    return "" if raw is None else str(raw)
+def _laya_smoke():
+    """Run one real decision. Never raises: returns {'ok':...} or {'error':...}."""
+    try:
+        import laya
+        router, started = _laya_router(), time.time()
+        res = laya.decide(router, {"message": "Business: a London dental practice. Observations: "
+                                   "No <meta viewport> tag found; the site is not mobile friendly."},
+                          questions=LAYA_Q, return_details=True)
+        return {"ok": True, "answer": _laya_choice(res),
+                "confidence": (getattr(res, "answer_confidence", None) or {}).get("best_service"),
+                "seconds": round(time.time() - started, 1)}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"[:300], "model": LAYA_REPO}
+app.add_event_handler("startup", _laya_warm)
 # Laya's "system prompt" (Laya is a classifier, not a chat model, so this question definition
 # is the entire instruction set it follows). Written to act like Harvey: a consultative analyst
 # that leads with value, never fabricates, and scores conservatively — thin or doubtful
@@ -65,19 +134,23 @@ LAYA_Q = {"best_service": {"type": "choice",
                "no_clear_need": "the observations are thin, stale, contradictory, or show no concrete problem — when in doubt, choose this"}}}
 LAYA_SERVICE = {"website_redesign": "Website redesign", "automation_chatbot": "AI chatbot / workflow automation"}
 def laya_assess(name, evidence):
-    """Real Laya call: laya.decide(Router, {'message': text}, questions=..., return_details=True). Needs torch + model download on first use."""
-    global _router
+    """Real Laya call: laya.decide(Router, {'message': text}, questions=..., return_details=True). Needs torch + the weights."""
     if env("LAYA_ENABLED") != "1": return None
     try:
         import laya
-        _router = _router or laya.Router()
         text = f"Business: {name}. Observations: " + "; ".join(e["fact"] for e in evidence)
-        r = laya.decide(_router, {"message": text}, questions=LAYA_Q, return_details=True)
-        ans = str((getattr(r, "answers", {}) or {}).get("best_service", ""))
+        r = laya.decide(_laya_router(), {"message": text}, questions=LAYA_Q, return_details=True)
+        ans = _laya_choice(r)
         conf = (getattr(r, "answer_confidence", None) or getattr(r, "confidence", {}) or {}).get("best_service")
-        key = next((k for k in LAYA_Q["best_service"]["criteria"] if k in ans), None)
+        criteria = LAYA_Q["best_service"]["criteria"]
+        # Exact match on the picked option first: the full answer dict also mentions every other
+        # option inside its probabilities, so a substring test would always return the first key.
+        key = ans if ans in criteria else next((k for k in criteria if k in ans), None)
         if key is None: return {"error": f"Unrecognised Laya answer: {ans[:60]}", "source": "laya"}
-        return {"source": "laya", "best_service": key, "confidence": round(float(conf), 3) if conf is not None else None}
+        out = {"source": "laya", "best_service": key, "confidence": round(float(conf), 3) if conf is not None else None}
+        raw = (getattr(r, "answers", {}) or {}).get("best_service")
+        if isinstance(raw, dict) and isinstance(raw.get("probabilities"), dict): out["probabilities"] = raw["probabilities"]
+        return out
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"[:200], "source": "laya"}
 
@@ -404,6 +477,13 @@ def smtp_test():
         s.login(c["user"], c["password"]); s.quit(); return {"ok": True, "message": "Login OK. No email was sent."}
     except ValueError as e: raise HTTPException(400, str(e))
     except Exception as e: raise HTTPException(400, f"{type(e).__name__}: {e}".replace(env("SMTP_PASS", "\0"), "***"))
+@app.post("/api/laya/test")
+async def laya_test():
+    """Run one real Laya decision. Slow on the first call (weights load); does not need LAYA_ENABLED."""
+    from starlette.concurrency import run_in_threadpool
+    out = await run_in_threadpool(_laya_smoke)
+    if out.get("error"): raise HTTPException(400, out["error"])
+    return out
 @app.get("/api/status")
 def status():
     c = db(); cnt = {r[0]: r[1] for r in c.execute("SELECT status,COUNT(*) FROM leads GROUP BY status")}; c.close()
